@@ -1,10 +1,9 @@
 import type { Metadata } from 'next'
 import './globals.css'
-import { AppContextProvider } from '@/lib/context/AppContextProvider'
 
 export const metadata: Metadata = {
-  title: 'Gantt Schema App',
-  description: 'Modern Gantt Chart Application',
+  title: 'v0 App',
+  description: 'Created with v0',
   generator: 'v0.dev',
 }
 
@@ -15,11 +14,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body>
-        <AppContextProvider>
-          {children}
-        </AppContextProvider>
-      </body>
+      <body>{children}</body>
     </html>
   )
 }
