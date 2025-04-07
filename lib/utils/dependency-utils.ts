@@ -21,7 +21,7 @@ interface DependencyCoordinate {
   endY: number;
 }
 
-export const ROW_HEIGHT = 32; // Justerad för att matcha Tailwind h-8
+export const ROW_HEIGHT = 50; // Increased to accommodate phase bar height
 
 export function getDependencyCoordinates(
   tasks: Task[], // Hela listan med tasks från projektet
@@ -59,6 +59,12 @@ export function getDependencyCoordinates(
           const toPos = getTaskPosFn(toTask);
           const fromIndex = fromTask.index;
           const toIndex = toTask.index;
+
+          // Ensure indices are defined before calculating Y
+          if (fromIndex === undefined || toIndex === undefined) {
+            console.warn("Dependency calculation skipped: Task index undefined.", { fromTask, toTask });
+            continue; // Skip this dependency if indices are missing
+          }
 
           let startX: number, startY: number, endX: number, endY: number;
 

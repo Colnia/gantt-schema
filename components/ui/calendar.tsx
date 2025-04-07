@@ -2,7 +2,9 @@
 
 import * as React from "react"
 import { ChevronLeft, ChevronRight } from "lucide-react"
-import { DayPicker } from "react-day-picker"
+import { DayPicker, Formatters } from "react-day-picker"
+import { sv } from "date-fns/locale"
+import { getWeek } from "date-fns"
 
 import { cn } from "@/lib/utils"
 import { buttonVariants } from "@/components/ui/button"
@@ -15,10 +17,20 @@ function Calendar({
   showOutsideDays = true,
   ...props
 }: CalendarProps) {
+  // Lägger till formatter för veckonummer
+  const formatters: Partial<Formatters> = {
+    formatWeekNumber: (weekNumber) => `v${weekNumber}`
+  };
+
   return (
     <DayPicker
       showOutsideDays={showOutsideDays}
       className={cn("p-3", className)}
+      locale={sv}
+      formatters={formatters}
+      weekStartsOn={1} // Veckan börjar på måndag
+      showWeekNumber={true} // Visa veckonummer
+      ISOWeek={true} // Använd ISO veckonummer
       classNames={{
         months: "flex flex-col sm:flex-row space-y-4 sm:space-x-4 sm:space-y-0",
         month: "space-y-4",
@@ -51,6 +63,7 @@ function Calendar({
         day_range_middle:
           "aria-selected:bg-accent aria-selected:text-accent-foreground",
         day_hidden: "invisible",
+        weeknumber: "text-xs font-medium text-muted-foreground w-9 text-center",
         ...classNames,
       }}
       components={{

@@ -1,11 +1,14 @@
 import type { Metadata } from 'next'
+import { Inter } from 'next/font/google'
 import './globals.css'
 import { AppContextProvider } from '@/lib/context/AppContextProvider'
+import { Navbar } from '../Projektordning/projektordning-git/app/components/navbar'
+
+const inter = Inter({ subsets: ['latin'] })
 
 export const metadata: Metadata = {
-  title: 'Gantt Schema App',
-  description: 'Modern Gantt Chart Application',
-  generator: 'v0.dev',
+  title: 'Projektordning - Projekthanteringsverktyg',
+  description: 'Ett kraftfullt verktyg för att hantera kyltekniska installationsprojekt',
 }
 
 export default function RootLayout({
@@ -14,10 +17,12 @@ export default function RootLayout({
   children: React.ReactNode
 }>) {
   return (
-    <html lang="en">
-      <body>
+    <html lang="sv">
+      <body className={inter.className}>
         <AppContextProvider>
-          {children}
+          <div className="flex min-h-screen">
+            {children}
+          </div>
         </AppContextProvider>
       </body>
     </html>

@@ -28,49 +28,37 @@ export const Timeline = ({
   const primaryItems = timelineItems.filter(item => item.type === 'primary');
   const secondaryItems = timelineItems.filter(item => item.type === 'secondary');
 
-  return (
-    <> 
-      {/* --- Tidslinje Header --- */}
-      <div ref={timelineHeaderRef} className="sticky top-0 bg-background z-10 border-b select-none">
-         {/* Primär Rad (t.ex. Månader, Veckor) */} 
-         <div className="flex border-b" style={{ width: `${totalWidth}px` }}>
-            {primaryItems.map((item, index) => (
-                <div key={`primary-${index}`} 
-                     className={`text-sm font-semibold text-center border-r overflow-hidden whitespace-nowrap p-1`}
-                     style={{ width: `${item.width}px` }}>
-                   {item.label}
-                </div>
-            ))}
-         </div>
-         {/* Sekundär Rad (t.ex. Dagar), visas bara om det finns några */} 
-         {secondaryItems.length > 0 && (
-             <div className="flex" style={{ width: `${totalWidth}px` }}>
-                {secondaryItems.map((item, index) => (
-                    <div key={`secondary-${index}`} 
-                         className={`text-xs text-center border-r text-muted-foreground overflow-hidden whitespace-nowrap p-0.5`}
-                         style={{ width: `${item.width}px` }}>
-                       {item.label}
-                    </div>
-                ))}
-             </div>
-         )}
-      </div>
+  // CSS-klasser baserade på tidsskala
+  const getPrimaryClassNames = () => {
+    let baseClasses = "text-sm font-semibold text-center border-r overflow-hidden whitespace-nowrap p-1";
+    
+    // Specialstil för veckor W1, W2 etc. med datumintervaller
+    if (timeScale === "day") {
+      return `${baseClasses} bg-muted/30`;
+    }
+    
+    return baseClasses;
+  };
+  
+  const getSecondaryClassNames = () => {
+    let baseClasses = "text-xs text-center border-r text-muted-foreground overflow-hidden whitespace-nowrap p-0.5";
+    
+    // Specialstil för veckodagar 
+    if (timeScale === "day") {
+      return `${baseClasses} bg-muted/10`;
+    }
+    
+    return baseClasses;
+  };
 
-      {/* --- Grid Bakgrund (Inuti Content) --- */} 
-      <div ref={timelineContentRef} className="relative flex-grow overflow-auto">
-         {/* Grid-bakgrund (oförändrad) */}
-         <div className="absolute inset-0 pointer-events-none">
-             <div className="flex h-full" style={{ width: `${totalWidth}px` }}>
-                 {dates.map((date, index) => (
-                     <div key={`grid-${index}`} className="h-full border-r border-muted-foreground/10" style={{ width: `${dayWidth}px` }}></div>
-                 ))}
-             </div>
-         </div>
-         
-         {/* Rendera children (uppgifts-bars etc.) här */} 
-         {children}
+  return (
+    <div ref={timelineContentRef} className="relative">
+      {/* Content area containing task bars and grid lines */}
+      <div className="relative">
+        {/* We don't need the grid background here anymore, it's now part of the children */}
+        {children}
       </div>
-    </>
+    </div>
   )
 }
 

@@ -28,16 +28,20 @@ const DependencySchema = z.object({
   ]),
 });
 
+// Skapa ett schema som kan acceptera både Date och string
+const DateSchema = z.union([
+  z.string().refine((date) => !isNaN(Date.parse(date)), {
+    message: "Invalid date format",
+  }),
+  z.instanceof(Date)
+]);
+
 export const TaskSchema = z.object({
   id: z.string().min(1, "Task ID cannot be empty"), // Ofta genererad, men bör finnas
   name: z.string().min(1, "Task name cannot be empty"),
   description: z.string().optional(), // Beskrivning är valfri
-  startDate: z.string().refine((date) => !isNaN(Date.parse(date)), { // Validera att det är ett giltigt datumsträng
-    message: "Invalid start date format",
-  }),
-  endDate: z.string().refine((date) => !isNaN(Date.parse(date)), {
-    message: "Invalid end date format",
-  }),
+  startDate: DateSchema, // Accepterar både string och Date
+  endDate: DateSchema,   // Accepterar både string och Date
   progress: z.number().min(0).max(100).int(), // Heltal 0-100
   status: TaskStatusSchema,
   priority: TaskPrioritySchema,
@@ -49,7 +53,12 @@ export const TaskSchema = z.object({
   collapsed: z.boolean().optional(), // Valfri
   isPhase: z.boolean().optional(), // Valfri, indikerar om uppgiften är en fas
   subTasks: z.array(z.string()).optional(), // Valfri array av subtask-ID
-}).refine((data) => new Date(data.startDate) <= new Date(data.endDate), { // Validera att startdatum är före eller samma som slutdatum
+}).refine((data) => {
+  // Konvertera till Date-objekt för jämförelse
+  const startDate = data.startDate instanceof Date ? data.startDate : new Date(data.startDate);
+  const endDate = data.endDate instanceof Date ? data.endDate : new Date(data.endDate);
+  return startDate <= endDate;
+}, {
   message: "End date cannot be earlier than start date",
   path: ["endDate"], // Associera felet med endDate-fältet
 });

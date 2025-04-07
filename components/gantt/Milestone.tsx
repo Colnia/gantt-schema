@@ -2,7 +2,7 @@
 import React from 'react';
 // import { Task } from '@/lib/types'; <-- Ta bort Task-import
 import { Milestone as MilestoneType } from '@/lib/types'; // Importera Milestone-typen och ge den ett alias
-import { Flag } from 'lucide-react';
+import { Milestone as MilestoneIcon } from 'lucide-react';
 
 interface MilestoneProps {
   // task: Task; <-- Ändra från task till milestone
@@ -25,7 +25,7 @@ const MilestoneComponent: React.FC<MilestoneProps> = ({ milestone, left }) => {
   return (
     // <div style={style} title={`${task.name} (Milestone)`}> <-- Uppdatera title
     <div style={style} title={`${milestone.name} (Milestone - ${milestone.date})`}>
-      <Flag className="h-5 w-5 text-blue-600" /> {/* Example styling */}
+      <MilestoneIcon className="h-6 w-6 text-gray-700" /> {/* Ändrar till Milestone-ikon med större storlek och mörkare färg */}
     </div>
   );
 };

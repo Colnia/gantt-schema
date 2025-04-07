@@ -1,6 +1,6 @@
 "use client"
 
-import React from "react"
+import * as React from "react"
 import {
   Calendar,
   Plus,
@@ -8,6 +8,15 @@ import {
   Settings,
   ZoomIn,
   ZoomOut,
+  LayoutGrid,
+  Milestone,
+  ShoppingBag,
+  FileCheck,
+  CheckSquare,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight
 } from "lucide-react"
 import { format, parseISO } from "date-fns"
 import { sv } from "date-fns/locale"
@@ -21,6 +30,7 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
+  DropdownMenuCheckboxItem,
 } from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
 import {
@@ -33,23 +43,34 @@ import {
 import { type Project, type TimeScale, type ViewMode } from "@/lib/types"
 
 interface GanttToolbarProps {
-  currentView: string
-  project: Project
+  currentView: "projects" | "project" | "phase" | "gantt" | "list"
+  project: Project | null
   searchTerm: string
-  setSearchTerm: (term: string) => void
+  setSearchTerm: (value: string) => void
   timeScale: TimeScale
-  handleTimeScaleChange: (scale: TimeScale) => void
-  handleViewModeChange: (mode: ViewMode) => void
+  handleTimeScaleChange: (value: TimeScale) => void
+  handleViewModeChange: (value: ViewMode) => void
   showResources: boolean
-  setShowResources: (show: boolean) => void
+  setShowResources: (value: boolean) => void
   showDependencies: boolean
-  setShowDependencies: (show: boolean) => void
+  setShowDependencies: (value: boolean) => void
   showMilestones: boolean
-  setShowMilestones: (show: boolean) => void
+  setShowMilestones: (value: boolean) => void
+  showColorLegend: boolean
+  setShowColorLegend: (value: boolean) => void
   handleZoomIn: () => void
   handleZoomOut: () => void
   isAddingTask: boolean
-  setIsAddingTask: (isAdding: boolean) => void
+  setIsAddingTask: (value: boolean) => void
+  isAddingPhase: boolean
+  setIsAddingPhase: (value: boolean) => void
+  isAddingActivity: boolean
+  setIsAddingActivity: (value: boolean) => void
+  setActivityType: (value: string) => void
+  handleMoveLeft: () => void
+  handleMoveRight: () => void
+  handleJumpLeft: () => void
+  handleJumpRight: () => void
 }
 
 export function GanttToolbar({
@@ -66,20 +87,31 @@ export function GanttToolbar({
   setShowDependencies,
   showMilestones,
   setShowMilestones,
+  showColorLegend,
+  setShowColorLegend,
   handleZoomIn,
   handleZoomOut,
   isAddingTask,
   setIsAddingTask,
+  isAddingPhase,
+  setIsAddingPhase,
+  isAddingActivity,
+  setIsAddingActivity,
+  setActivityType,
+  handleMoveLeft,
+  handleMoveRight,
+  handleJumpLeft,
+  handleJumpRight,
 }: GanttToolbarProps) {
   return (
     <div className="p-4 border-b flex items-center justify-between flex-wrap gap-2">
       <div className="flex items-center gap-2">
-        <h2 className="text-xl font-bold">{currentView === "projects" ? "Projektöversikt" : project.name}</h2>
-        {currentView !== "projects" && (
-          <Badge variant="outline" className="ml-2">
-            {format(parseISO(project.startDate), "d MMM yyyy", { locale: sv })} -
-            {format(parseISO(project.endDate), "d MMM yyyy", { locale: sv })}
-          </Badge>
+        <h2 className="text-xl font-bold">{currentView === "projects" ? "Projektöversikt" : project?.name}</h2>
+        {currentView !== "projects" && project?.startDate && project?.endDate && (
+          <span className="text-xs px-2 py-0.5 border rounded-full ml-2 bg-slate-100">
+            {format(typeof project.startDate === 'string' ? parseISO(project.startDate) : project.startDate, "d MMM yyyy", { locale: sv })} -
+            {format(typeof project.endDate === 'string' ? parseISO(project.endDate) : project.endDate, "d MMM yyyy", { locale: sv })}
+          </span>
         )}
       </div>
 
@@ -91,7 +123,7 @@ export function GanttToolbar({
             placeholder="Sök uppgifter..."
             className="w-[200px] pl-8"
             value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSearchTerm(e.target.value)}
           />
         </div>
 
@@ -131,7 +163,7 @@ export function GanttToolbar({
               <Checkbox
                 id="show-resources"
                 checked={showResources}
-                onCheckedChange={(checked) => setShowResources(!!checked)}
+                onCheckedChange={(checked: boolean | "indeterminate") => setShowResources(!!checked)}
                 className="mr-2"
               />
               <label htmlFor="show-resources">Visa resurser</label>
@@ -140,7 +172,7 @@ export function GanttToolbar({
               <Checkbox
                 id="show-dependencies"
                 checked={showDependencies}
-                onCheckedChange={(checked) => setShowDependencies(!!checked)}
+                onCheckedChange={(checked: boolean | "indeterminate") => setShowDependencies(!!checked)}
                 className="mr-2"
               />
               <label htmlFor="show-dependencies">Visa beroenden</label>
@@ -149,14 +181,66 @@ export function GanttToolbar({
               <Checkbox
                 id="show-milestones"
                 checked={showMilestones}
-                onCheckedChange={(checked) => setShowMilestones(!!checked)}
+                onCheckedChange={(checked: boolean | "indeterminate") => setShowMilestones(!!checked)}
                 className="mr-2"
               />
               <label htmlFor="show-milestones">Visa milstolpar</label>
             </DropdownMenuItem>
+            <DropdownMenuCheckboxItem 
+              checked={showColorLegend}
+              onCheckedChange={setShowColorLegend}
+            >
+              Visa färgförklaring
+            </DropdownMenuCheckboxItem>
           </DropdownMenuContent>
         </DropdownMenu>
 
+        <div className="flex items-center gap-1">
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button variant="outline" size="icon" onClick={handleJumpLeft} aria-label="Hoppa bakåt">
+                  <ChevronsLeft className="h-4 w-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Hoppa bakåt</TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+          
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button variant="outline" size="icon" onClick={handleMoveLeft} aria-label="Flytta åt vänster">
+                  <ChevronLeft className="h-4 w-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Flytta åt vänster</TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+          
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button variant="outline" size="icon" onClick={handleMoveRight} aria-label="Flytta åt höger">
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Flytta åt höger</TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+          
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button variant="outline" size="icon" onClick={handleJumpRight} aria-label="Hoppa framåt">
+                  <ChevronsRight className="h-4 w-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Hoppa framåt</TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        </div>
+        
         <TooltipProvider>
           <Tooltip>
             <TooltipTrigger asChild>
@@ -180,10 +264,51 @@ export function GanttToolbar({
         </TooltipProvider>
 
         {currentView !== "projects" && (
-          <Button onClick={() => setIsAddingTask(true)}>
-            <Plus className="mr-2 h-4 w-4" />
-            Lägg till uppgift
-          </Button>
+          <>
+            <Button onClick={() => setIsAddingPhase(true)}>
+              <LayoutGrid className="mr-2 h-4 w-4" />
+              Lägg till fas
+            </Button>
+            
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button>
+                  <Plus className="mr-2 h-4 w-4" />
+                  Lägg till aktivitet
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={() => {
+                  setActivityType("task");
+                  setIsAddingActivity(true);
+                }}>
+                  <CheckSquare className="mr-2 h-4 w-4" />
+                  Uppgift
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => {
+                  setActivityType("milestone");
+                  setIsAddingActivity(true);
+                }}>
+                  <Milestone className="mr-2 h-4 w-4" />
+                  Milstolpe
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => {
+                  setActivityType("delivery");
+                  setIsAddingActivity(true);
+                }}>
+                  <ShoppingBag className="mr-2 h-4 w-4" />
+                  Leverans
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => {
+                  setActivityType("decision");
+                  setIsAddingActivity(true);
+                }}>
+                  <FileCheck className="mr-2 h-4 w-4" />
+                  Beslut
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </>
         )}
       </div>
     </div>

@@ -1,0 +1,270 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// Grundläggande projektmodell
+model Project {
+  id                String   @id @default(cuid())
+  name              String
+  description       String?
+  customer          String
+  manager           String
+  startDate         DateTime
+  plannedEndDate    DateTime
+  actualEndDate     DateTime?
+  status            String   // "Planering", "Pågående", "Färdigt", "Försenat"
+  
+  // Ekonomifält
+  budget            Float
+  costToDate        Float    @default(0)
+  estimatedTotalCost Float
+  
+  // Relationer
+  phases            Phase[]
+  tasks             Task[]
+  resources         ResourceAssignment[]
+  materialDeliveries MaterialDelivery[]
+  dependencies      ProjectDependency[] @relation("PredecessorProject")
+  dependents        ProjectDependency[] @relation("SuccessorProject")
+  documents         Document[]
+  
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  isArchived        Boolean  @default(false)
+}
+
+// Fasmodell för uppdelning av projekt
+model Phase {
+  id              String    @id @default(cuid())
+  name            String
+  description     String?
+  status          String    // "Ej påbörjad", "Pågående", "Avslutad", "Pausad"
+  startDate       DateTime?
+  endDate         DateTime?
+  completionRate  Float     @default(0)
+  color           String?   @default("#4169E1")
+  
+  // Relationer
+  projectId       String
+  project         Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  tasks           Task[]
+  materialDeliveries MaterialDelivery[]
+  dependencies    PhaseDependency[] @relation("PredecessorPhase")
+  dependents      PhaseDependency[] @relation("SuccessorPhase")
+  resourceAssignments ResourceAssignment[]
+  
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+}
+
+// Uppgiftsmodell som hanterar de faktiska uppgifterna
+model Task {
+  id             String        @id @default(cuid())
+  name           String
+  description    String?
+  startDate      DateTime
+  endDate        DateTime
+  status         String        // "Ej påbörjad", "Pågående", "Avslutad", "Pausad"
+  priority       String?       // "Låg", "Medium", "Hög"
+  progress       Float         @default(0)
+  isMilestone    Boolean       @default(false)
+  
+  // Nya fält för aktivitetstyp
+  activityType   String?       // "task", "milestone", "delivery", "decision"
+  color          String?       // Färg för aktiviteten i Gantt-vyn
+  
+  // Ekonomifält
+  estimatedCost  Float         @default(0)
+  actualCost     Float         @default(0)
+  budgetVariance Float?        // Beräknat fält
+  
+  // Relationer
+  projectId      String
+  project        Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  phaseId        String?
+  phase          Phase?        @relation(fields: [phaseId], references: [id])
+  
+  // Beroenden och hierarki
+  dependencies   TaskDependency[] @relation("PredecessorTask")
+  dependents     TaskDependency[] @relation("SuccessorTask")
+  parentTaskId   String?
+  parentTask     Task?         @relation("SubTasks", fields: [parentTaskId], references: [id])
+  subTasks       Task[]        @relation("SubTasks")
+  
+  // Resurstilldelningar
+  resourceAssignments    ResourceAssignment[]
+  
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+}
+
+// Resursmodell för tekniker och utrustning
+model Resource {
+  id              String    @id @default(cuid())
+  name            String
+  type            String    // "Tekniker", "Utrustning", etc.
+  description     String?   // Beskrivning av resursen
+  email           String?
+  phone           String?
+  costPerHour     Float?    // Kostnad per timme
+  baseHoursPerDay Float     @default(8) // Standardtimmar per dag
+  
+  // Relationer
+  skills          Skill[]
+  resourceAssignments     ResourceAssignment[]
+  availabilityExceptions AvailabilityException[]
+  
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+}
+
+// Färdighetsmodell för resurser
+model Skill {
+  id              String    @id @default(cuid())
+  name            String
+  level           Int       // 1-5
+  resourceId      String
+  resource        Resource  @relation(fields: [resourceId], references: [id], onDelete: Cascade)
+  
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+}
+
+// Resurstilldelning till projekt/faser/uppgifter
+model ResourceAssignment {
+  id              String    @id @default(cuid())
+  resourceId      String
+  resource        Resource  @relation(fields: [resourceId], references: [id], onDelete: Cascade)
+  
+  projectId       String
+  project         Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  
+  phaseId         String?
+  phase           Phase?    @relation(fields: [phaseId], references: [id])
+  
+  taskId          String?
+  task            Task?     @relation(fields: [taskId], references: [id])
+  
+  startDate       DateTime
+  endDate         DateTime
+  hoursPerDay     Float     @default(8)
+  notes           String?
+  
+  // Ekonomifält
+  estimatedCost   Float     @default(0)
+  actualCost      Float     @default(0)
+  
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+}
+
+// Material och leveranser
+model MaterialDelivery {
+  id              String    @id @default(cuid())
+  description     String
+  supplier        String
+  quantity        Float
+  unit            String
+  cost            Float
+  expectedDate    DateTime
+  actualDate      DateTime?
+  status          String    // "Planerad", "Beställd", "Levererad", "Försenad", "Avbruten"
+  
+  // Relationer
+  projectId       String
+  project         Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  phaseId         String?
+  phase           Phase?    @relation(fields: [phaseId], references: [id])
+  
+  trackingNumber  String?
+  contactPerson   String?
+  notes           String?
+
+  // Added field for Gantt visibility control
+  showOnGantt     Boolean   @default(false)
+  
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+}
+
+// Projektberoenden
+model ProjectDependency {
+  id                  String    @id @default(cuid())
+  predecessorId       String
+  predecessor         Project   @relation("PredecessorProject", fields: [predecessorId], references: [id])
+  successorId         String
+  successor           Project   @relation("SuccessorProject", fields: [successorId], references: [id])
+  type                String    // "Start-till-Start", "Start-till-Slut", "Slut-till-Start", "Slut-till-Slut"
+  lagDays             Int       @default(0)
+  
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+}
+
+// Fasberoenden
+model PhaseDependency {
+  id                  String    @id @default(cuid())
+  predecessorId       String
+  predecessor         Phase     @relation("PredecessorPhase", fields: [predecessorId], references: [id])
+  successorId         String
+  successor           Phase     @relation("SuccessorPhase", fields: [successorId], references: [id])
+  type                String    // "Start-till-Start", "Start-till-Slut", "Slut-till-Start", "Slut-till-Slut"
+  lagDays             Int       @default(0)
+  
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+}
+
+// Uppgiftsberoenden
+model TaskDependency {
+  id                  String    @id @default(cuid())
+  predecessorId       String
+  predecessor         Task      @relation("PredecessorTask", fields: [predecessorId], references: [id])
+  successorId         String
+  successor           Task      @relation("SuccessorTask", fields: [successorId], references: [id])
+  type                String    // "Start-till-Start", "Start-till-Slut", "Slut-till-Start", "Slut-till-Slut"
+  lagDays             Int       @default(0)
+  
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+  
+  @@unique([predecessorId, successorId])
+}
+
+// Tillgänglighetsundantag för resurser
+model AvailabilityException {
+  id              String    @id @default(cuid())
+  resourceId      String
+  resource        Resource  @relation(fields: [resourceId], references: [id], onDelete: Cascade)
+  startDate       DateTime
+  endDate         DateTime
+  reason          String    // "Semester", "Sjukdom", "Utbildning", etc.
+  notes           String?
+  
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+}
+
+// Dokumentmodell för projektdokumentation
+model Document {
+  id              String    @id @default(cuid())
+  name            String
+  type            String
+  url             String
+  projectId       String
+  project         Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+}

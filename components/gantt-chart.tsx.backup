@@ -1,0 +1,1331 @@
+/// <reference types="react" />
+
+"use client"
+
+import React, { useCallback, useEffect, useRef, useState, useMemo } from "react"
+import {
+  addDays,
+  differenceInDays,
+  format,
+  isAfter,
+  isBefore,
+  parseISO,
+  endOfMonth,
+  addMonths,
+  getMonth,
+  getYear,
+  eachMonthOfInterval,
+  eachWeekOfInterval,
+  eachDayOfInterval,
+  isSameDay,
+  isWeekend,
+  isEqual,
+  getISOWeek
+} from "date-fns"
+import { sv } from "date-fns/locale"
+import {
+  AlertCircle,
+  Calendar,
+  ChevronLeft,
+  ChevronRight,
+  Flag,
+  Link,
+  Plus,
+  Save,
+  Search,
+  Settings,
+  ZoomIn,
+  ZoomOut,
+  ChevronDown,
+} from "lucide-react"
+
+import { GanttToolbar, Timeline, TaskBar, GanttLegend, EnhancedTaskList } from "@/components/gantt"
+import { Milestone } from "@/components/gantt/Milestone"
+import { DependencyLine } from "@/components/gantt/Dependency"
+import { Button } from "@/components/ui/button"
+import { Card, CardContent } from "@/components/ui/card"
+import { Input } from "@/components/ui/input"
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import { Badge } from "@/components/ui/badge"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog"
+import { Label } from "@/components/ui/label"
+import { Checkbox } from "@/components/ui/checkbox"
+import { Slider } from "@/components/ui/slider"
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
+import { Textarea } from "@/components/ui/textarea"
+import { CreateProjectDialog } from "@/components/gantt/dialogs/CreateProjectDialog"
+import { AddTaskDialog } from "@/components/gantt/dialogs/AddTaskDialog"
+import { EditTaskDialog } from "@/components/gantt/dialogs/EditTaskDialog"
+import { TaskDetailsDialog } from "@/components/gantt/dialogs/TaskDetailsDialog"
+import { ResourceDetailsDialog } from "@/components/gantt/dialogs/ResourceDetailsDialog"
+import { PhaseDialog } from "@/components/gantt/dialogs/PhaseDialog"
+import { ActivityDialog } from "@/components/gantt/dialogs/ActivityDialog"
+import GanttTaskTree from "./gantt/GanttTaskTree"
+
+// Kontext-hooks
+import { useProjects } from "@/lib/context/ProjectContext"
+import { useUI } from "@/lib/context/UIContext" 
+import { useSelection } from "@/lib/context/SelectionContext" 
+import { useInteraction } from "@/lib/context/InteractionContext"
+
+// Typer och Utils
+import { Project, Task, Resource, Dependency, TaskStatus, TaskPriority, TimeScale, ViewMode, Milestone as MilestoneType, Phase } from "@/lib/types"
+import {
+  getTaskWidth,
+  getTaskLeft,
+  getDates,
+  getTimelineItems,
+  getDefaultDayWidth,
+  formatDate,
+  ensureMinimumViewDuration,
+  getTodayFormatted,
+  getFutureDateFormatted,
+  ensureDate,
+} from "@/lib/utils/date-utils"
+import {
+  getStatusColor,
+  getPriorityColor,
+  groupTasksByParent,
+  filterTasksBySearchTerm,
+  filterTasksByView,
+  calculatePhaseProgress,
+  calculateProjectProgress,
+  updatePhasesProgress,
+} from "@/lib/utils/task-utils"
+import { getDependencyCoordinates, ROW_HEIGHT } from "@/lib/utils/dependency-utils"
+
+// Hämta exempeldata (bör tas bort när data laddas externt)
+// import { sampleProjects } from "@/lib/context/ProjectContext" // Behövs inte längre här
+
+// Add AlertDialog imports
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
+
+import { cn } from "@/lib/utils"
+
+interface GanttChartProps {
+  projectId?: string;
+}
+
+export default function GanttChart({ projectId }: GanttChartProps) {
+  // --- Projektkontext --- 
+  const {
+    projects,
+    activeProjectId,
+    activeProject,
+    setActiveProjectId,
+    addProject,
+    updateProject,
+    deleteProject,
+    addTask,
+    updateTask,
+    deleteTask,
+    deletePhase,
+  } = useProjects()
+
+  // --- UI Kontext --- 
+  const {
+    viewStartDate: contextViewStartDate,
+    viewEndDate: contextViewEndDate,
+    dayWidth,
+    timeScale,
+    setViewStartDate,
+    setViewEndDate,
+    setDayWidth,
+    setTimeScale,
+    searchTerm,
+    setSearchTerm,
+    showResources,
+    setShowResources,
+    showDependencies,
+    setShowDependencies,
+    showMilestones,
+    setShowMilestones,
+    showColorLegend,
+    setShowColorLegend,
+    viewMode,
+    currentView,
+    setCurrentView,
+    currentPhase,
+    setCurrentPhase,
+    breadcrumbs,
+    setBreadcrumbs,
+    contextMenuPosition,
+    setContextMenuPosition,
+    contextMenuTaskId,
+    setContextMenuTaskId,
+    expandedPhases,
+    togglePhase,
+    handleTimeScaleChange,
+    handleViewModeChange,
+    handleZoomIn,
+    handleZoomOut,
+    handleMoveLeft,
+    handleMoveRight,
+    handleJumpLeft,
+    handleJumpRight,
+  } = useUI();
+
+  // Define normalizeDate *before* it's used in hooks
+  const normalizeDate = (date: Date): Date => {
+    // Create Date objects set to midnight UTC to avoid timezone shifts
+    const normalized = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+    return normalized;
+  };
+
+  // --- Selection Kontext --- 
+  const {
+    selectedTask,
+    setSelectedTask,
+    selectedTasks,
+    setSelectedTasks,
+    isMultiSelecting,
+    handleTaskClick: selectionHandleTaskClick,
+    clearSelection,
+  } = useSelection();
+
+  // --- Interaction Kontext ---
+  const {
+    draggingTask,
+    setDraggingTask,
+    resizingTask,
+    setResizingTask,
+    editingTask,
+    setEditingTask,
+    isAddingProject,
+    setIsAddingProject,
+    isAddingTask,
+    setIsAddingTask,
+    isAddingPhase,
+    setIsAddingPhase,
+    isAddingActivity,
+    setIsAddingActivity
+  } = useInteraction();
+
+  // --- Temporärt State (för formulär och taskToEdit) --- 
+  const [taskToEdit, setTaskToEdit] = useState<string | null>(null)
+  const [taskToView, setTaskToView] = useState<string | null>(null)
+  const [resourceToView, setResourceToView] = useState<string | null>(null)
+  const [activityType, setActivityType] = useState<string>("task") 
+  const [phaseToEdit, setPhaseToEdit] = useState<string | null>(null)
+  const [currentParentTaskId, setCurrentParentTaskId] = useState<string | null>(null)
+  const [phaseToDelete, setPhaseToDelete] = useState<string | null>(null)
+
+  // Refs
+  const ganttRef = useRef<HTMLDivElement>(null)
+  const taskListRef = useRef<HTMLDivElement>(null)
+  const timelineRef = useRef<HTMLDivElement>(null)
+  const timelineHeaderRef = useRef<HTMLDivElement>(null)
+  const timelineContentRef = useRef<HTMLDivElement>(null)
+
+  // useEffects
+
+  // Uppdatera viewStartDate/viewEndDate när activeProject ändras
+  useEffect(() => {
+    if (activeProject) {
+      try {
+        const start = ensureDate(activeProject.startDate);
+        const end = ensureDate(activeProject.endDate);
+        // Handle null dates before passing to ensureMinimumViewDuration
+        if (!start || !end) {
+          console.error("Project has invalid start or end date, using fallback dates for view.", { start, end });
+          const today = new Date();
+          setViewStartDate(today);
+          setViewEndDate(addMonths(today, 6));
+        } else {
+          const initialDates = ensureMinimumViewDuration(start, end);
+          setViewStartDate(initialDates.viewStartDate);
+          setViewEndDate(initialDates.viewEndDate);
+        }
+      } catch (error) {
+        console.error("Error setting initial view dates:", error, activeProject.startDate, activeProject.endDate);
+        // Fallback remains the same
+        const today = new Date();
+        setViewStartDate(today);
+        setViewEndDate(addMonths(today, 6));
+      }
+    } else {
+       const today = new Date();
+       setViewStartDate(today);
+       setViewEndDate(addMonths(today, 6));
+    }
+  }, [activeProject, setViewStartDate, setViewEndDate]); // Dependencies are correct
+
+  // Sätt aktivt projekt baserat på projectId prop
+  useEffect(() => {
+    if (projectId && projects.some((p: Project) => p.id === projectId)) {
+      setActiveProjectId(projectId);
+    }
+  }, [projectId, projects, setActiveProjectId]);
+
+  // useEffect för att justera dayWidth baserat på timeScale finns nu i UIContext
+
+  // --- Helper Functions (wrappa med useCallback) ---
+  const dates = useMemo(() => {
+    console.log("[GanttChart] Calculating dates. normalizedViewStart:", contextViewStartDate ? normalizeDate(contextViewStartDate) : null, "normalizedViewEnd:", contextViewEndDate ? normalizeDate(contextViewEndDate) : null);
+    
+    const normalizedViewStart = contextViewStartDate ? normalizeDate(contextViewStartDate) : null;
+    const normalizedViewEnd = contextViewEndDate ? normalizeDate(contextViewEndDate) : null;
+    
+    if (!normalizedViewStart || !normalizedViewEnd) return [];
+    // Add validation check for Date objects
+    if (!(normalizedViewStart instanceof Date) || !(normalizedViewEnd instanceof Date) || 
+        isNaN(normalizedViewStart.getTime()) || isNaN(normalizedViewEnd.getTime())) {
+      console.error("[GanttChart] Invalid Date objects passed to getDates:", { normalizedViewStart, normalizedViewEnd });
+      return [];
+    }
+    return getDates(normalizedViewStart, normalizedViewEnd)
+  }, [contextViewStartDate, contextViewEndDate, normalizeDate])
+
+  const timelineItems = useMemo(() => {
+     // Normalize dates here as well
+     const normalizedViewStart = contextViewStartDate ? normalizeDate(contextViewStartDate) : null;
+     const normalizedViewEnd = contextViewEndDate ? normalizeDate(contextViewEndDate) : null;
+
+     if (!normalizedViewStart || !normalizedViewEnd) return [];
+     // Skicka med dayWidth till getTimelineItems
+     return getTimelineItems(timeScale, normalizedViewStart, normalizedViewEnd, dayWidth)
+  }, [timeScale, contextViewStartDate, contextViewEndDate, dayWidth, normalizeDate]);
+
+  const filteredTasks = useMemo(() => {
+    if (!activeProject) return [];
+    // This list should only contain top-level phases and tasks without a phase
+    // Child tasks are handled by displayedItems
+    const phasesAsTasks: Task[] = activeProject.phases?.map((phase: Phase) => ({
+      id: phase.id,
+      name: phase.name,
+      startDate: phase.startDate || activeProject.startDate,
+      endDate: phase.endDate || activeProject.endDate,
+      status: phase.status,
+      priority: "medium",
+      progress: phase.completionRate,
+      resources: [],
+      dependencies: [],
+      color: phase.color || "#4169E1",
+      isPhase: true,
+    } as Task)) || [];
+
+    const searchFiltered = searchTerm 
+      ? (activeProject.tasks || []).filter((task: Task) => 
+          task.name.toLowerCase().includes(searchTerm.toLowerCase()))
+      : (activeProject.tasks || []);
+
+    const tasksWithoutPhase: Task[] = searchFiltered.filter((task: Task) => !task.phaseId && !task.parentTaskId && !task.isPhase);
+
+    // Return only phases and root-level tasks (no phases)
+    return [...phasesAsTasks, ...tasksWithoutPhase];
+
+  }, [activeProject, searchTerm]);
+
+  // NEW: Create a list representing the displayed order, respecting hierarchy and expansion
+  const displayedItems = useMemo(() => {
+    const items: Task[] = [];
+    if (!activeProject) return items;
+
+    const phases = activeProject.phases || [];
+    const tasks = activeProject.tasks || [];
+    
+    // Group tasks by phase and handle hierarchical structure
+    const tasksByPhase: Record<string, Task[]> = {};
+    const tasksWithoutPhase: Task[] = [];
+    const subTasksByParent: Record<string, Task[]> = {};
+    
+    // First, categorize all tasks
+    tasks.forEach((task: Task) => {
+      if (task.phaseId) {
+        if (!tasksByPhase[task.phaseId]) tasksByPhase[task.phaseId] = [];
+        if (!task.parentTaskId) {
+          // This is a direct child of a phase (not a subtask)
+          tasksByPhase[task.phaseId].push(task);
+        } else {
+          // This is a subtask, organize by parent
+          if (!subTasksByParent[task.parentTaskId]) {
+            subTasksByParent[task.parentTaskId] = [];
+          }
+          subTasksByParent[task.parentTaskId].push(task);
+        }
+      } else if (task.parentTaskId) {
+        // This is a subtask not in a phase
+        if (!subTasksByParent[task.parentTaskId]) {
+          subTasksByParent[task.parentTaskId] = [];
+        }
+        subTasksByParent[task.parentTaskId].push(task);
+      } else if (!task.isPhase) {
+        // Root level task (no phase, no parent)
+        tasksWithoutPhase.push(task);
+      }
+    });
+
+    // Helper function to recursively add tasks and their subtasks
+    const addTaskWithSubtasks = (task: Task, items: Task[]) => {
+      items.push(task);
+      
+      // Add all subtasks of this task if there are any
+      const subtasks = subTasksByParent[task.id] || [];
+      subtasks.forEach(subtask => {
+        addTaskWithSubtasks(subtask, items);
+      });
+    };
+
+    // Add phases and their tasks
+    phases.forEach((phase: Phase) => {
+      // Add the phase itself (represented as a Task)
+      items.push({
+        id: phase.id,
+        name: phase.name,
+        startDate: phase.startDate || activeProject.startDate,
+        endDate: phase.endDate || activeProject.endDate,
+        status: phase.status,
+        priority: "medium",
+        progress: phase.completionRate,
+        color: phase.color || "#4169E1",
+        isPhase: true,
+      } as Task);
+
+      // If the phase is expanded, add its direct child tasks and their subtasks
+      if (expandedPhases.has(phase.id)) {
+        const phaseTasks = tasksByPhase[phase.id] || [];
+        phaseTasks.forEach((task: Task) => {
+          addTaskWithSubtasks(task, items);
+        });
+      }
+    });
+    
+    // Add tasks without a phase (if the 'no-phase' category is expanded or always shown)
+    // Since we don't have a proper toggle for this yet, we'll always show them
+    tasksWithoutPhase.forEach(task => {
+      addTaskWithSubtasks(task, items);
+    });
+
+    // Filter by search term if needed
+    if (searchTerm) {
+      return items.filter(item => 
+        item.name.toLowerCase().includes(searchTerm.toLowerCase())
+      );
+    }
+
+    return items;
+  }, [activeProject, expandedPhases, searchTerm]);
+
+  // --- Beräkna koordinater för beroendelinjer --- 
+  const dependencyCoordinates = useMemo(() => {
+    // Normalize viewStartDate here
+    const normalizedViewStart = contextViewStartDate ? normalizeDate(contextViewStartDate) : null;
+
+    if (!showDependencies || !activeProject || !normalizedViewStart) return [];
+    // Add optional chaining
+    if (!activeProject?.tasks) {
+      console.warn("activeProject.tasks is undefined for dependency calculation");
+      return [];
+    }
+
+    const coords: { x1: number; y1: number; x2: number; y2: number; id: string }[] = [];
+    const taskPositions: Record<string, { top: number; left: number; width: number; height: number }> = {};
+
+    // First pass: Calculate and store positions for all relevant tasks
+    // Find the timeline content element for calculating positions relative to it
+    const timelineContentElement = timelineContentRef.current;
+    const taskListElement = taskListRef.current;
+
+    if (!timelineContentElement || !taskListElement) {
+      // console.warn("Timeline or TaskList refs not available for dependency calculation");
+      return []; // Elements needed for offset calculations
+    }
+
+    // We need to iterate through the *displayedItems* to get the correct vertical position (index)
+    displayedItems.forEach((item, index) => {
+      if (!item.isPhase) { // Dependencies only apply to tasks
+        const taskElement = taskListElement.querySelector(`[data-task-id="${item.id}"]`) as HTMLElement;
+        const taskBarElement = timelineContentElement.querySelector(`[data-task-id="${item.id}"]`) as HTMLElement;
+
+        if (taskElement && taskBarElement) {
+          const taskRect = taskElement.getBoundingClientRect();
+          const timelineRect = timelineContentElement.getBoundingClientRect();
+          const position = getTaskPosition(item);
+          
+          // Calculate top relative to the task list container
+          const top = taskElement.offsetTop + taskElement.offsetHeight / 2; 
+
+          taskPositions[item.id] = {
+            top: top, // Use offsetTop relative to taskListRef
+            left: position.left, // Horizontal start position in timeline
+            width: position.width, // Width in timeline
+            height: taskElement.offsetHeight // Height from task list element
+          };
+        }
+      }
+    });
+
+    // Second pass: Calculate dependency lines using stored positions
+    activeProject.tasks.forEach((task: Task) => {
+      // Ensure task.dependencies is treated as Dependency[]
+      if (task.dependencies && task.dependencies.length > 0 && taskPositions[task.id]) {
+        // Correctly type the loop variable as Dependency and access predecessorId
+        task.dependencies.forEach((dep: Dependency) => { 
+          // Use dep.predecessorId (or potentially dep.fromTaskId if that's the actual field)
+          // Assuming predecessorId based on latest schema/types
+          const predecessorId = dep.predecessorId || dep.fromTaskId; // Use optional chaining or fallback if needed
+          if (!predecessorId) {
+             console.warn("Dependency object missing predecessorId/fromTaskId", dep);
+             return; // Skip if ID is missing
+          }
+
+          const predecessorTask = activeProject.tasks?.find((t: Task) => t.id === predecessorId);
+          // Use predecessorId for lookup in taskPositions
+          if (predecessorTask && taskPositions[predecessorId]) { 
+            const startPos = taskPositions[predecessorId]; // Position of predecessor task
+            const endPos = taskPositions[task.id];   // Position of current task
+
+            // Define start and end points for the line
+            // Start from the middle-right of the predecessor task bar
+            const x1 = startPos.left + startPos.width;
+            const y1 = startPos.top;
+            // End at the middle-left of the current task bar
+            const x2 = endPos.left;
+            const y2 = endPos.top;
+
+            // Use a unique key, perhaps combining predecessor and successor IDs
+            coords.push({ x1, y1, x2, y2, id: `${predecessorId}-${task.id}` }); 
+          }
+        });
+      }
+    });
+
+    return coords;
+  }, [showDependencies, activeProject, contextViewStartDate, displayedItems, getTaskPosition, normalizeDate]);
+
+  // --- Interaction Handlers (wrappa med useCallback) ---
+  const handleTaskDragStart = useCallback((taskId: string, e: React.DragEvent<HTMLDivElement>) => {
+    setDraggingTask(taskId); // setDraggingTask från useInteraction
+    e.dataTransfer.setData("taskId", taskId);
+    // Spara ursprunglig startposition i dataTransfer för att beräkna skillnad vid drop?
+    // Detta är lite knepigt pga begränsningar i dataTransfer.
+    // Alternativt: Hämta task i onDrop och beräkna offset där.
+    e.dataTransfer.effectAllowed = "move";
+  }, [setDraggingTask]); // Beroenden: setDraggingTask
+
+  const handleTaskDragOver = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+  }, []); // Inga beroenden
+
+  const handleTaskDrop = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    const taskId = e.dataTransfer.getData("taskId");
+
+    // Add check for activeProject.tasks early
+    if (!taskId || !ganttRef.current || !activeProject || !activeProject.tasks || !contextViewStartDate || dayWidth <= 0) {
+        setDraggingTask(null);
+        return;
+    }
+
+    const task = activeProject.tasks.find((t: Task) => t.id === taskId);
+    if (!task) {
+        setDraggingTask(null);
+        return;
+    }
+
+    try { // Wrap date operations in try-catch
+      // Beräkna droppositionen
+      const ganttRect = ganttRef.current.getBoundingClientRect();
+      const dropX = e.clientX - ganttRect.left + ganttRef.current.scrollLeft;
+      const daysFromViewStart = Math.round(dropX / dayWidth);
+      const newDropDate = addDays(contextViewStartDate, daysFromViewStart);
+
+      // Ensure dates are Date objects
+      const projectStart = ensureDate(activeProject.startDate);
+      const projectEnd = ensureDate(activeProject.endDate);
+      const taskStart = ensureDate(task.startDate);
+      const taskEnd = ensureDate(task.endDate);
+
+      // If any date is null, cannot calculate reliably
+      if (!projectStart || !projectEnd || !taskStart || !taskEnd) {
+        console.warn("Cannot calculate drop: one or more dates are invalid/null.");
+        setDraggingTask(null);
+        return;
+      }
+
+      // Boundary checks (now safe to use dates)
+      if (isBefore(newDropDate, projectStart)) { // Use validated projectStart
+        console.warn("Cannot move task before project start date.");
+        setDraggingTask(null);
+        return;
+      }
+      const durationDays = differenceInDays(taskEnd, taskStart); // Use validated taskEnd, taskStart
+      const newEndDate = addDays(newDropDate, durationDays);
+      if (isAfter(newEndDate, projectEnd)) { // Use validated projectEnd
+        console.warn("Cannot move task after project end date.");
+        setDraggingTask(null);
+        return;
+      }
+
+      // Format dates back to strings for update
+      const newStartDateString = formatDate(newDropDate);
+      const newEndDateString = formatDate(newEndDate);
+
+      console.log(`Task ${taskId} dropped. New start date: ${newStartDateString}`);
+
+      // Call updateTask with the task object containing changes
+      updateTask({ 
+        id: taskId, 
+        startDate: newStartDateString,
+        endDate: newEndDateString,
+      } as Task);
+
+    } catch (error) {
+      console.error("Error during task drop calculation:", error);
+    } finally {
+        setDraggingTask(null);
+    }
+
+  }, [activeProject, contextViewStartDate, dayWidth, setDraggingTask, updateTask]);
+  
+  const handleTaskResizeStart = useCallback((taskId: string, edge: "start" | "end", e: React.MouseEvent) => {
+    setResizingTask({ id: taskId, edge });
+    e.stopPropagation();
+
+    const ganttElement = ganttRef.current;
+    // Add check for activeProject.tasks early
+    if (!ganttElement || !activeProject || !activeProject.tasks) return;
+
+    const initialMouseX = e.clientX;
+    const task = activeProject.tasks.find((t: Task) => t.id === taskId);
+    if (!task) return;
+
+    let originalStartDate: Date | null;
+    let originalEndDate: Date | null;
+    let projectStartDate: Date | null;
+    let projectEndDate: Date | null;
+
+    try { // Wrap date ensuring in try-catch
+        originalStartDate = ensureDate(task.startDate);
+        originalEndDate = ensureDate(task.endDate);
+        projectStartDate = ensureDate(activeProject.startDate);
+        projectEndDate = ensureDate(activeProject.endDate);
+
+        // Check if any date became null after ensureDate
+        if (!originalStartDate || !originalEndDate || !projectStartDate || !projectEndDate) {
+          console.error("Error ensuring dates for resize start: one or more dates are null.");
+          setResizingTask(null);
+          return; // Abort if initial dates are invalid/null
+        }
+    } catch (error) {
+        console.error("Error ensuring dates for resize start:", error);
+        setResizingTask(null);
+        return; // Abort if initial dates are invalid
+    }
+    
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+       try { // Wrap move calculations
+          const movementX = moveEvent.clientX - initialMouseX;
+          const daysChange = Math.round(movementX / dayWidth);
+
+          if (resizingTask?.edge === "start") {
+            // Ensure dates are valid before calculation
+            if (!originalStartDate || !originalEndDate || !projectStartDate) return; 
+            const newStartDate = addDays(originalStartDate, daysChange);
+            // Check boundaries using validated dates
+            if (isBefore(newStartDate, projectStartDate) || isAfter(newStartDate, originalEndDate)) return;
+            handleTaskResizeInternal(taskId, newStartDate); // Pass Date object
+          } else if (resizingTask?.edge === "end") {
+            // Ensure dates are valid before calculation
+            if (!originalStartDate || !originalEndDate || !projectEndDate) return;
+            const newEndDate = addDays(originalEndDate, daysChange);
+            // Check boundaries using validated dates
+            if (isAfter(newEndDate, projectEndDate) || isBefore(newEndDate, originalStartDate)) return;
+            handleTaskResizeInternal(taskId, undefined, newEndDate); // Pass Date object
+          }
+       } catch (error) {
+         console.error("Error during task resize mouse move:", error);
+         // Potentially stop the resize operation here
+       }
+    };
+
+    const handleMouseUp = () => {
+      setResizingTask(null);
+      document.removeEventListener("mousemove", handleMouseMove);
+      document.removeEventListener("mouseup", handleMouseUp);
+    };
+
+    document.addEventListener("mousemove", handleMouseMove);
+    document.addEventListener("mouseup", handleMouseUp);
+
+  }, [setResizingTask, activeProject, dayWidth, resizingTask, handleTaskResizeInternal]);
+  
+  const handleTaskContextMenu = useCallback((taskId: string, e: React.MouseEvent) => {
+    e.preventDefault();
+    setContextMenuPosition({ x: e.clientX, y: e.clientY }); // setContextMenuPosition från useUI
+    setContextMenuTaskId(taskId); // setContextMenuTaskId från useUI
+  }, [setContextMenuPosition, setContextMenuTaskId]); // Beroenden
+
+  // Dessa används inte direkt av memoized komponenter (än), men kan wrappas för konsekvens
+  const handleStartInlineEdit = useCallback((taskId: string) => {
+    setEditingTask(taskId); // setEditingTask från useInteraction
+    clearSelection(); // clearSelection från useSelection
+  }, [setEditingTask, clearSelection]);
+
+  const handleFinishInlineEdit = useCallback(() => {
+     setEditingTask(null); // setEditingTask från useInteraction
+  }, [setEditingTask]);
+
+  const openTaskEditor = useCallback((taskId: string) => {
+    setTaskToEdit(taskId); // Lokal state setter
+    setContextMenuPosition(null); // Stäng kontextmenyn
+    console.log("Öppnar redigeringsdialog för:", taskId);
+  }, [setTaskToEdit, setContextMenuPosition]); // Lägg till setContextMenuPosition som beroende
+
+  // Omdöpt från handleTaskClick för att undvika dubbla deklarationer
+  const handleTaskSelection = useCallback((taskId: string, e?: React.MouseEvent | React.KeyboardEvent) => {
+    // Check if event exists before calling stopPropagation
+    if (e && typeof e.stopPropagation === 'function') {
+      e.stopPropagation();
+    }
+
+    // Hantera val via SelectionContext - Korrekt ordning på argument
+    // Pass the event if it exists, otherwise maybe null or an empty object depending on context needs
+    selectionHandleTaskClick(taskId, e || {} as React.MouseEvent); // Pass event or empty object
+
+    // Vid dubbelklick, öppna detaljer (bara för musklick)
+    if (e && 'detail' in e && e.detail === 2) {
+      setTaskToView(taskId);
+    }
+  }, [selectionHandleTaskClick, setTaskToView]);
+
+  // Function to handle delete confirmation
+  const handleDeletePhaseConfirm = async () => {
+    if (phaseToDelete) {
+      try {
+        await deletePhase(phaseToDelete); // Call context function
+        // Optionally show success notification
+      } catch (error) {
+        // Error is already logged in context, optionally show UI notification
+        console.error("UI: Failed to delete phase", error);
+      }
+      setPhaseToDelete(null); // Close dialog regardless of outcome
+    }
+  };
+
+  // TimelineHeader-komponenten som renderar datumrubriker
+  const TimelineHeader = ({ 
+    dates, 
+    dayWidth, 
+    timeScale 
+  }: { 
+    dates: Date[]; 
+    dayWidth: number; 
+    timeScale: TimeScale 
+  }) => {
+    const monthsMap = new Map<string, { startIndex: number; endIndex: number; }>()
+    const weeksMap = new Map<string, { startIndex: number; endIndex: number; weekNumber: number; }>()
+    
+    // Skapa mappningar av månader och veckor för att kunna gruppera dem
+    dates.forEach((date, index) => {
+      const monthKey = format(date, 'yyyy-MM')
+      const weekKey = format(date, 'yyyy-ww')
+      const weekNumber = getISOWeek(date)
+      
+      // Hantera månader
+      if (!monthsMap.has(monthKey)) {
+        monthsMap.set(monthKey, { startIndex: index, endIndex: index })
+      } else {
+        const monthData = monthsMap.get(monthKey)!
+        monthsMap.set(monthKey, { ...monthData, endIndex: index })
+      }
+      
+      // Hantera veckor
+      if (!weeksMap.has(weekKey)) {
+        weeksMap.set(weekKey, { startIndex: index, endIndex: index, weekNumber })
+      } else {
+        const weekData = weeksMap.get(weekKey)!
+        weeksMap.set(weekKey, { ...weekData, endIndex: index })
+      }
+    })
+    
+    return (
+      <div className="relative border-b border-border bg-card text-xs font-medium">
+        {/* Månadshuvuden */}
+        <div className="flex h-8 border-b border-border/70">
+          {Array.from(monthsMap.entries()).map(([key, { startIndex, endIndex }]) => {
+            const width = (endIndex - startIndex + 1) * dayWidth
+            const date = dates[startIndex]
+            
+            return (
+              <div 
+                key={key} 
+                className="border-r border-border/50 flex items-center justify-center font-semibold bg-accent/10"
+                style={{ width: `${width}px` }}
+              >
+                {format(date, "MMMM yyyy", { locale: sv })}
+              </div>
+            )
+          })}
+        </div>
+        
+        {/* Veckohuvuden */}
+        {(timeScale === "day" || timeScale === "week" || dayWidth >= 15) && (
+          <div className="flex h-7 border-b border-border/70">
+            {Array.from(weeksMap.entries()).map(([key, { startIndex, endIndex, weekNumber }]) => {
+              const width = (endIndex - startIndex + 1) * dayWidth
+              
+              return (
+                <div 
+                  key={key} 
+                  className={`border-r border-border/50 flex items-center justify-center ${dayWidth >= 10 ? 'font-medium' : ''}`}
+                  style={{ width: `${width}px` }}
+                >
+                  {dayWidth >= 10 ? `v${weekNumber}` : weekNumber}
+                </div>
+              )
+            })}
+          </div>
+        )}
+        
+        {/* Dagsrubriker */}
+        <div className="flex h-6">
+          {dates.map((date, i) => {
+            // Olika klasser beroende på dag
+            const isWeekendDay = isWeekend(date)
+            const isToday = isEqual(date, new Date())
+            const dayClasses = cn(
+              "border-r border-border/50 flex flex-col justify-center items-center text-[10px]",
+              isWeekendDay && "bg-muted/50",
+              isToday && "bg-primary/10 font-bold"
+            )
+            
+            // Visa olika format beroende på utrymme
+            let dayDisplay
+            if (dayWidth >= 30) {
+              dayDisplay = (
+                <>
+                  <div>{format(date, "E", { locale: sv })}</div>
+                  <div>{format(date, "d", { locale: sv })}</div>
+                </>
+              )
+            } else if (dayWidth >= 18) {
+              dayDisplay = format(date, "E d", { locale: sv })
+            } else if (dayWidth >= 10) {
+              dayDisplay = format(date, "d", { locale: sv })
+            } else {
+              // För smala kolumner visa bara en markör för helger
+              dayDisplay = null
+            }
+            
+            return (
+              <div 
+                key={`day-${i}`} 
+                className={dayClasses}
+                style={{ width: `${dayWidth}px` }}
+                title={format(date, "EEEE d MMMM yyyy", { locale: sv })}
+              >
+                {dayDisplay}
+              </div>
+            )
+          })}
+        </div>
+      </div>
+    )
+  }
+
+  // --- Rendering --- 
+
+  if (!activeProject && currentView !== 'projects') {
+      return <div>Laddar projekt... eller inget projekt valt.</div>; 
+  }
+  
+  if (currentView === 'projects') {
+     return (
+         <Card className="w-full">
+             <CardContent className="p-4">
+                 <div className="flex justify-between items-center mb-4">
+                     <h2 className="text-xl font-bold">Projektöversikt</h2>
+                     <DialogTrigger asChild>
+                         <Button onClick={() => setIsAddingProject(true)}>
+                             <Plus className="mr-2 h-4 w-4" />
+                             Skapa projekt
+                         </Button>
+                     </DialogTrigger>
+                 </div>
+                 <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                     {projects.map((proj: Project) => {
+                       // Add checks before formatting dates
+                       const projStart = ensureDate(proj.startDate);
+                       const projEnd = ensureDate(proj.endDate);
+                       const startDateStr = projStart ? formatDate(projStart, "d MMM") : "N/A";
+                       const endDateStr = projEnd ? formatDate(projEnd, "d MMM yyyy") : "N/A";
+                       return (
+                         <Card key={proj.id} onClick={() => navigateToProject(proj.id)} className="cursor-pointer hover:shadow-lg transition-shadow">
+                             <CardContent className="p-4">
+                                 <h3 className="font-semibold mb-2">{proj.name}</h3>
+                                 <p className="text-sm text-muted-foreground">
+                                     {startDateStr} - {endDateStr}
+                                 </p>
+                             </CardContent>
+                         </Card>
+                       );
+                     })}
+                 </div>
+             </CardContent>
+         </Card>
+     );
+  }
+
+  if (!activeProject) {
+      console.error("Rendering error: activeProject is null when it shouldn't be.");
+      return <div>Ett fel uppstod vid laddning av projektet.</div>;
+  }
+
+  return (
+    <Card className="w-full">
+      <CardContent className="p-0">
+        <GanttToolbar
+          currentView="gantt"
+          project={activeProject}
+          searchTerm={searchTerm}
+          setSearchTerm={setSearchTerm}
+          timeScale={timeScale}
+          handleTimeScaleChange={handleTimeScaleChange}
+          handleViewModeChange={handleViewModeChange}
+          showResources={showResources}
+          setShowResources={setShowResources}
+          showDependencies={showDependencies}
+          setShowDependencies={setShowDependencies}
+          showMilestones={showMilestones}
+          setShowMilestones={setShowMilestones}
+          showColorLegend={showColorLegend}
+          setShowColorLegend={setShowColorLegend}
+          handleZoomIn={handleZoomIn}
+          handleZoomOut={handleZoomOut}
+          isAddingTask={isAddingTask}
+          setIsAddingTask={setIsAddingTask}
+          isAddingPhase={isAddingPhase}
+          setIsAddingPhase={setIsAddingPhase}
+          isAddingActivity={isAddingActivity}
+          setIsAddingActivity={setIsAddingActivity}
+          setActivityType={setActivityType}
+          handleMoveLeft={handleMoveLeft}
+          handleMoveRight={handleMoveRight}
+          handleJumpLeft={handleJumpLeft}
+          handleJumpRight={handleJumpRight}
+        />
+
+        <div className="flex flex-row w-full h-[calc(100vh-200px)]">
+          <div className="w-1/4 border-r overflow-y-auto" ref={taskListRef}>
+            {/* Lägg till rubrik i vänsterkolumnen */}
+            <div className="sticky top-0 z-30 bg-background border-b shadow-sm">
+              <div className="h-8 flex items-center px-4 font-semibold bg-accent/10 border-b border-border/70">
+                Uppgifter
+              </div>
+              <div className="h-7 flex items-center px-4 border-b border-border/70"></div>
+              <div className="h-6 flex items-center px-4"></div>
+            </div>
+            
+            {/* Samma höjd/avstånd som spacern i högerkolumnen */}
+            <div style={{ height: "21px" }}></div>
+            
+            <GanttTaskTree
+              displayedItems={displayedItems}
+              selectedItemId={selectedTask}
+              onSelectItem={(id, type) => {
+                if (type === "task") {
+                  handleTaskSelection(id);
+                } else if (type === "phase") {
+                  navigateToPhase(id);
+                }
+              }}
+              expandedPhases={expandedPhases}
+              togglePhase={togglePhase}
+              rowHeight={ROW_HEIGHT}
+            />
+          </div>
+
+          <div ref={ganttRef} className="w-3/4 overflow-auto" onClick={clearSelection} onDragOver={handleTaskDragOver} onDrop={handleTaskDrop}>
+            {/* Fixed header at top, outside the Timeline component */}
+            <div className="sticky top-0 z-30 bg-background border-b shadow-sm">
+              <TimelineHeader 
+                dates={dates} 
+                dayWidth={dayWidth} 
+                timeScale={timeScale} 
+              />
+            </div>
+            
+            {/* Add a spacer div to match timeline header height (8px + 7px + 6px = 21px) */}
+            <div style={{ height: "21px" }}></div>
+            
+            {/* Main content area with grid lines */}
+            <div style={{ position: "relative", overflow: "visible" }}>
+              {/* Vertical Grid Lines First (at bottom z-index) */}
+              <div className="absolute top-0 left-0 right-0 bottom-0 pointer-events-none">
+                {dates.map((date: Date, index: number) => (
+                  <div
+                    key={`grid-${index}`}
+                    className="absolute top-0 bottom-0 border-l border-border/50" 
+                    style={{ left: `${index * dayWidth}px`, height: `${(displayedItems?.length || 0) * ROW_HEIGHT}px` }}
+                  />
+                ))}
+                
+                {/* Today Line Indicator */}
+                {contextViewStartDate && contextViewEndDate && (
+                  (() => {
+                    const today = new Date();
+                    if (today >= contextViewStartDate && today <= contextViewEndDate) {
+                      const todayOffset = differenceInDays(today, contextViewStartDate);
+                      const todayLeft = todayOffset * dayWidth;
+                      return (
+                        <div
+                          className="absolute top-0 bottom-0 border-l-2 border-primary z-10 pointer-events-none"
+                          style={{ 
+                            left: `${todayLeft}px`, 
+                            height: `${(displayedItems?.length || 0) * ROW_HEIGHT}px` 
+                          }}
+                          title={`Idag: ${format(today, "PPP", { locale: sv })}`}
+                        />
+                      );
+                    }
+                    return null;
+                  })()
+                )}
+              </div>
+              
+              {/* TaskBars on top */}
+              <div className="relative" style={{ 
+                  width: `${dates.length * dayWidth}px`, 
+                  height: `${(displayedItems?.length || 0) * ROW_HEIGHT}px`
+              }}>
+                {/* Map over DISPLAYED items for rendering TaskBars */}
+                {Array.isArray(displayedItems) && displayedItems.map((item, index) => {
+                    const task = item;
+                    const topPosition = index * ROW_HEIGHT;
+                    
+                    // Add debug info for alignment verification
+                    console.log(`Rendering task ${task.id} (${task.name}) at index ${index}, top: ${topPosition}px`);
+                    
+                    // Ensure the first task (index 0) gets rendered with proper positioning
+                    if (index === 0) {
+                      console.log("First task positioning:", { topPosition, task });
+                    }
+                    
+                    return (
+                        <TaskBar
+                          key={`taskbar-${task.id}`}
+                          task={task}
+                          index={index}
+                          offsetTop={topPosition}
+                          getTaskPosition={getTaskPosition}
+                          isSelected={selectedTask === task.id || selectedTasks.has(task.id)}
+                          isBeingEdited={editingTask === task.id}
+                          handleTaskClick={handleTaskSelection}
+                          handleTaskContextMenu={handleTaskContextMenu}
+                          handleStartInlineEdit={handleStartInlineEdit}
+                          handleFinishInlineEdit={handleFinishInlineEdit}
+                          handleSaveInlineEditInternal={handleSaveInlineEditInternal}
+                          handleTaskDragStart={handleTaskDragStart}
+                          handleTaskResizeStart={handleTaskResizeStart}
+                        />
+                    );
+                })}
+                {showMilestones && activeProject && Array.isArray(activeProject.milestones) && activeProject.milestones.map((milestone: MilestoneType) => {
+                  const { left } = getTaskPosition(milestone);
+                  if (left >= 0 && left <= dates.length * dayWidth) {
+                    return (
+                      <Milestone
+                        key={milestone.id}
+                        milestone={milestone}
+                        left={left}
+                      />
+                    );
+                  }
+                  return null;
+                })}
+              </div>
+            </div>
+            
+            {/* Lägg till statuslegenden */}
+            <GanttLegend 
+              visible={showColorLegend}
+              onToggle={setShowColorLegend}
+            />
+          </div>
+        </div>
+        
+        <CreateProjectDialog />
+        <AddTaskDialog activeProjectId={activeProjectId} />
+        <EditTaskDialog taskId={taskToEdit} isOpen={taskToEdit !== null} onClose={() => setTaskToEdit(null)} />
+        <TaskDetailsDialog
+          isOpen={taskToView !== null}
+          onOpenChange={(open) => !open && setTaskToView(null)}
+          taskId={taskToView}
+          onEditTask={openTaskEditor}
+        />
+        <ResourceDetailsDialog
+          isOpen={resourceToView !== null}
+          onOpenChange={(open: boolean) => !open && setResourceToView(null)}
+          resourceId={resourceToView}
+        />
+        <PhaseDialog
+          isOpen={isAddingPhase || phaseToEdit !== null}
+          onOpenChange={(open) => {
+            if (!open) {
+              setIsAddingPhase(false);
+              setPhaseToEdit(null);
+            }
+          }}
+          projectId={activeProjectId}
+          phaseId={phaseToEdit}
+        />
+        <ActivityDialog
+          isOpen={isAddingActivity || taskToEdit !== null}
+          onOpenChange={(open) => {
+            if (!open) {
+              setIsAddingActivity(false);
+              setTaskToEdit(null);
+              setCurrentParentTaskId(null);
+              // Reset currentPhase if it was only set for adding a task to a phase
+              // This depends on how phase selection is meant to work otherwise
+              // For now, let's assume we keep currentPhase if the user navigated to it
+              // but clear it if it was set via context menu add.
+              // A better approach might be needed depending on full UX design.
+              // Let's clear it for now when closing the add dialog opened via context menu.
+              if (isAddingActivity) {
+                 setCurrentPhase(null); 
+              }
+            }
+          }}
+          projectId={activeProjectId}
+          // Always pass the currentPhase state, regardless of currentView
+          phaseId={currentPhase}
+          parentTaskId={currentParentTaskId}
+          taskId={taskToEdit}
+          defaultType={activityType}
+        />
+
+        {contextMenuPosition && contextMenuTaskId && (
+           <DropdownMenu open={!!contextMenuPosition} onOpenChange={(open: boolean) => !open && setContextMenuPosition(null)}>
+              <DropdownMenuTrigger 
+                 style={{ position: 'fixed', left: contextMenuPosition.x, top: contextMenuPosition.y, width: 0, height: 0 }} 
+              />
+              <DropdownMenuContent align="start">
+                 <DropdownMenuItem onClick={() => handleStartInlineEdit(contextMenuTaskId)}>Byt namn</DropdownMenuItem>
+                 {filteredTasks.find((item: Task) => item.id === contextMenuTaskId && item.isPhase) ? (
+                   <DropdownMenuItem onClick={() => {
+                     setPhaseToEdit(contextMenuTaskId);
+                     setContextMenuPosition(null);
+                   }}>Redigera fas...</DropdownMenuItem>
+                 ) : (
+                   <DropdownMenuItem onClick={() => openTaskEditor(contextMenuTaskId)}>Redigera uppgift...</DropdownMenuItem>
+                 )}
+                 {filteredTasks.find((item: Task) => item.id === contextMenuTaskId && item.isPhase) && (
+                   <DropdownMenuItem onClick={() => {
+                     setIsAddingActivity(true);
+                     setCurrentPhase(contextMenuTaskId);
+                     setContextMenuPosition(null);
+                   }}>Lägg till aktivitet i fas</DropdownMenuItem>
+                 )}
+                 <DropdownMenuSeparator />
+                 {displayedItems.find((item: Task) => item.id === contextMenuTaskId && item.isPhase) ? (
+                   <DropdownMenuItem 
+                      className="text-red-600"
+                      // Open confirmation dialog instead of deleting directly
+                      onClick={() => {
+                        setPhaseToDelete(contextMenuTaskId);
+                        setContextMenuPosition(null); // Close context menu
+                      }} 
+                    >Ta bort fas...</DropdownMenuItem> // Added ellipsis
+                 ) : (
+                   <DropdownMenuItem className="text-red-600" onClick={() => handleDeleteTaskInternal(contextMenuTaskId)}>Ta bort uppgift</DropdownMenuItem>
+                 )}
+              </DropdownMenuContent>
+           </DropdownMenu>
+        )}
+
+        {/* Delete Phase Confirmation Dialog */}
+        <AlertDialog open={phaseToDelete !== null} onOpenChange={(open: boolean) => !open && setPhaseToDelete(null)}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Är du säker?</AlertDialogTitle>
+              <AlertDialogDescription>
+                Om du tar bort denna fas kommer alla dess underliggande uppgifter också att tas bort permanent. 
+                Denna åtgärd kan inte ångras.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel onClick={() => setPhaseToDelete(null)}>Avbryt</AlertDialogCancel>
+              <AlertDialogAction onClick={handleDeletePhaseConfirm}>Ta bort fas</AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
+      </CardContent>
+    </Card>
+  )
+}
+
+const getTaskPosition = useCallback(
+  (task: Task): { left: number; width: number } => {
+    const normalizedViewStart = contextViewStartDate ? normalizeDate(contextViewStartDate) : null;
+    
+    if (!normalizedViewStart) {
+      console.warn("normalizedViewStart is null in getTaskPosition");
+      return { left: 0, width: 0 };
+    }
+    
+    try {
+      // Konvertera task datum till Date-objekt
+      let taskStartDate: Date | null = null;
+      let taskEndDate: Date | null = null;
+      
+      // Hantera string eller Date input
+      if (typeof task.startDate === 'string') {
+        taskStartDate = new Date(task.startDate);
+      } else if (task.startDate instanceof Date) {
+        taskStartDate = task.startDate;
+      }
+      
+      if (typeof task.endDate === 'string') {
+        taskEndDate = new Date(task.endDate);
+      } else if (task.endDate instanceof Date) {
+        taskEndDate = task.endDate;
+      }
+      
+      // Validera att vi har giltiga datum
+      if (!taskStartDate || !taskEndDate || isNaN(taskStartDate.getTime()) || isNaN(taskEndDate.getTime())) {
+        console.warn(`Task ${task.id} has invalid dates:`, { 
+          original: { start: task.startDate, end: task.endDate },
+          parsed: { start: taskStartDate, end: taskEndDate }
+        });
+        return { left: 0, width: 0 };
+      }
+      
+      // NY METOD: Använd findDateIndexes för att hitta positionen i dates-arrayen
+      const { startIndex, endIndex } = findDateIndexes(taskStartDate, taskEndDate, dates);
+      
+      // Beräkna positioner baserat på funna index
+      const left = startIndex * dayWidth;
+      const width = Math.max(1, (endIndex - startIndex + 1) * dayWidth); // Minst 1px bredd
+      
+      // Logga detaljerad info för debugging
+      console.log(`Task ${task.id} (${task.name}) position calculation:`, {
+        taskStartDate: normalizeDate(taskStartDate).toISOString(), 
+        taskEndDate: normalizeDate(taskEndDate).toISOString(),
+        viewStartDate: normalizedViewStart.toISOString(),
+        startIndex,
+        endIndex,
+        dayWidth,
+        calculatedLeft: left,
+        calculatedWidth: width
+      });
+      
+      return { 
+        left: Math.max(0, left), // Säkerställ att left aldrig är negativ
+        width
+      };
+    } catch (error) {
+      console.error("Error in getTaskPosition:", error, task);
+      return { left: 0, width: 0 };
+    }
+  },
+  [contextViewStartDate, dayWidth, normalizeDate, dates] // Add dates as dependency
+);
+
+const getMilestonePosition = useCallback((milestone: MilestoneType) => {
+  if (!contextViewStartDate || dayWidth <= 0) return { left: 0 };
+  try {
+    const milestoneDate = ensureDate(milestone.date);
+    // Hantera null från ensureDate
+    if (!milestoneDate) {
+      console.warn(`[getMilestonePosition] Milestone ${milestone.id} has invalid date after ensureDate`);
+      return { left: 0 };
+    }
+    
+    // Använd findDateIndexes för att hitta positionen i dates-arrayen
+    // Vi skapar ett "task" med samma start- och slutdatum för att återanvända logiken
+    const { startIndex } = findDateIndexes(milestoneDate, milestoneDate, dates);
+    const left = startIndex * dayWidth;
+    
+    return { left };
+  } catch (error) {
+    console.error("Error parsing milestone date:", error, milestone.date);
+    return { left: 0 };
+  }
+}, [contextViewStartDate, dayWidth, normalizeDate, dates]); // Add dates as dependency
+
+// Hjälpfunktion för att hitta index i dates-array för ett datum
+const findDateIndexes = (taskStartDate: Date | null, taskEndDate: Date | null, datesArray: Date[]): { startIndex: number, endIndex: number } => {
+  // Default values
+  let startIndex = -1;
+  let endIndex = -1;
+  
+  if (!taskStartDate || !taskEndDate || datesArray.length === 0) {
+    return { startIndex: 0, endIndex: 0 };
+  }
+  
+  // Normalisera datumen
+  const normalizedTaskStart = normalizeDate(taskStartDate);
+  const normalizedTaskEnd = normalizeDate(taskEndDate);
+  
+  // Hitta matchande datum i dates-arrayen
+  for (let i = 0; i < datesArray.length; i++) {
+    const currentDate = datesArray[i];
+    
+    // Jämför datum (ignorera tid) - kolla startdate
+    if (currentDate.getFullYear() === normalizedTaskStart.getFullYear() &&
+        currentDate.getMonth() === normalizedTaskStart.getMonth() &&
+        currentDate.getDate() === normalizedTaskStart.getDate()) {
+      startIndex = i;
+    }
+    
+    // Jämför datum (ignorera tid) - kolla enddate
+    if (currentDate.getFullYear() === normalizedTaskEnd.getFullYear() &&
+        currentDate.getMonth() === normalizedTaskEnd.getMonth() &&
+        currentDate.getDate() === normalizedTaskEnd.getDate()) {
+      endIndex = i;
+      // Om vi hittat båda, kan vi avsluta loopen
+      if (startIndex !== -1) break;
+    }
+  }
+  
+  // Om vi inte hittade datumen i arrayen, använd lämpliga fallback-värden
+  if (startIndex === -1) {
+    // Kontrollera om uppgiften börjar före vyns start
+    if (normalizedTaskStart < datesArray[0]) {
+      startIndex = 0; // Använd vyns första datum
+    } else {
+      startIndex = datesArray.length - 1; // Använd vyns sista datum
+    }
+  }
+  
+  if (endIndex === -1) {
+    // Kontrollera om uppgiften slutar efter vyns slut
+    if (normalizedTaskEnd > datesArray[datesArray.length - 1]) {
+      endIndex = datesArray.length - 1; // Använd vyns sista datum
+    } else {
+      endIndex = 0; // Använd vyns första datum
+    }
+  }
+  
+  return { startIndex, endIndex };
+};
+

@@ -18,6 +18,10 @@ interface InteractionContextProps {
   setIsAddingTask: Dispatch<SetStateAction<boolean>>
   isAddingProject: boolean
   setIsAddingProject: Dispatch<SetStateAction<boolean>>
+  isAddingPhase: boolean
+  setIsAddingPhase: Dispatch<SetStateAction<boolean>>
+  isAddingActivity: boolean
+  setIsAddingActivity: Dispatch<SetStateAction<boolean>>
 }
 
 const InteractionContext = createContext<InteractionContextProps | undefined>(undefined)
@@ -28,6 +32,14 @@ export const InteractionProvider = ({ children }: { children: ReactNode }) => {
   const [editingTask, setEditingTask] = useState<string | null>(null) // För inline edit
   const [isAddingTask, setIsAddingTask] = useState<boolean>(false)
   const [isAddingProject, setIsAddingProject] = useState<boolean>(false)
+  const [isAddingPhase, setIsAddingPhase] = useState<boolean>(false)
+  const [isAddingActivity, setIsAddingActivity] = useState<boolean>(false)
+  
+  // Wrapper för setIsAddingProject för att logga ändringar
+  const setIsAddingProjectWithLogging = useCallback((value: boolean | ((prevState: boolean) => boolean)) => {
+    console.log("setIsAddingProject anropas med:", value);
+    setIsAddingProject(value);
+  }, []);
 
   const value = useMemo(
     () => ({
@@ -40,9 +52,13 @@ export const InteractionProvider = ({ children }: { children: ReactNode }) => {
       isAddingTask,
       setIsAddingTask,
       isAddingProject,
-      setIsAddingProject,
+      setIsAddingProject: setIsAddingProjectWithLogging,
+      isAddingPhase,
+      setIsAddingPhase,
+      isAddingActivity,
+      setIsAddingActivity,
     }),
-    [draggingTask, resizingTask, editingTask, isAddingTask, isAddingProject]
+    [draggingTask, resizingTask, editingTask, isAddingTask, isAddingProject, isAddingPhase, isAddingActivity, setIsAddingProjectWithLogging]
   )
 
   return <InteractionContext.Provider value={value}>{children}</InteractionContext.Provider>
